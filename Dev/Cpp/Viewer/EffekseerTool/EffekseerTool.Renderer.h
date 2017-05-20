@@ -231,7 +231,7 @@ public:
 	/**
 	@brief	録画終了
 	*/
-	void EndRecord(std::vector<Effekseer::Color>& pixels, bool generateAlpha, bool removeAlpha);
+	void EndRecord(std::vector<Effekseer::Color>& pixels);
 
 	/**
 		@brief	背景の読み込み

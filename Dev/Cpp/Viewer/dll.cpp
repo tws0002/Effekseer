@@ -1281,10 +1281,155 @@ bool Native::SetRandomSeed( int seed )
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
+bool RenderRecord(std::vector<Effekseer::Color>& pixels_out, TransparenceType transparenceType)
+{
+	pixels_out.resize(g_renderer->GuideWidth * g_renderer->GuideHeight);
+
+	if (transparenceType == TransparenceType::None ||
+		transparenceType == TransparenceType::Original)
+	{
+		g_renderer->BackgroundColor = Effekseer::Color(0, 0, 0, 255);
+
+		if (!g_renderer->BeginRecord(g_renderer->GuideWidth, g_renderer->GuideHeight)) return false;
+
+		g_renderer->BeginRendering();
+		g_manager->Draw();
+		g_renderer->EndRendering();
+
+		std::vector<Effekseer::Color> pixels;
+		g_renderer->EndRecord(pixels);
+
+		int32_t width = g_renderer->GuideWidth;
+		int32_t height = g_renderer->GuideHeight;
+
+		for (int32_t y_ = 0; y_ < height; y_++)
+		{
+			for (int32_t x_ = 0; x_ < width; x_++)
+			{
+				if (transparenceType == TransparenceType::None)
+				{
+					pixels[x_ + width * y_].A = 255;
+				}
+
+				pixels_out[x_ + y_ * width] = pixels[x_ + y_ * width];
+			}
+		}
+	}
+	else if (transparenceType == TransparenceType::Generate)
+	{
+		// Estimate alpha from three backgrounds.
+
+		auto f2b = [](float v) -> uint8_t
+		{
+			auto v_ = v * 255;
+			if (v_ > 255) v_ = 255;
+			if (v_ < 0) v_ = 0;
+			return v_;
+		};
+
+		auto b2f = [](uint8_t v) -> float
+		{
+			auto v_ = (float) v / 255.0f;
+			return v_;
+		};
+
+		const int32_t pointNum = 5;
+
+		std::vector<Effekseer::Color> pixels[pointNum];
+
+		for (int32_t i = 0; i < pointNum; i++)
+		{
+			auto v = (float) (i) / (float) (pointNum - 1) * 255;
+			if (i == 0) g_renderer->BackgroundColor = Effekseer::Color(v, v, v, 255);
+			if (i == 1) g_renderer->BackgroundColor = Effekseer::Color(v, v, v, 255);
+			if (i == 2) g_renderer->BackgroundColor = Effekseer::Color(v, v, v, 255);
+
+			if (!g_renderer->BeginRecord(g_renderer->GuideWidth, g_renderer->GuideHeight)) return false;
+
+			g_renderer->BeginRendering();
+			g_manager->Draw();
+			g_renderer->EndRendering();
+
+			g_renderer->EndRecord(pixels[i]);
+		}
+
+
+		int32_t width = g_renderer->GuideWidth;
+		int32_t height = g_renderer->GuideHeight;
+
+		for (int32_t y_ = 0; y_ < height; y_++)
+		{
+			for (int32_t x_ = 0; x_ < width; x_++)
+			{
+				Effekseer::Color result;
+
+				float vf[4][pointNum];
+
+				for (int32_t i = 0; i <pointNum; i++)
+				{
+					vf[3][i] = b2f(pixels[i][x_ + width * y_].A);
+
+					vf[0][i] = b2f(pixels[i][x_ + width * y_].R) * vf[3][i];
+					vf[1][i] = b2f(pixels[i][x_ + width * y_].G) * vf[3][i];
+					vf[2][i] = b2f(pixels[i][x_ + width * y_].B) * vf[3][i];
+				}
+
+				// Calc delta using lsm
+				float sum_x = 0;
+				float sum_y = 0;
+				float sum_xy = 0;
+				float sum_xx = 0;
+
+				for (int32_t i = 0; i <pointNum; i++)
+				{
+					for (int32_t c = 0; c < 3; c++)
+					{
+						float x = (float) i / (float) (pointNum - 1);
+						float y = vf[c][i];
+
+						sum_x += x;
+						sum_y += y;
+						sum_xy += x * y;
+						sum_xx += x * x;
+					}
+				}
+
+				float delta = ((pointNum * 3) * sum_xy - sum_x * sum_y) / ((pointNum * 3) * sum_xx - sum_x * sum_x);
+				if (delta > 1) delta = 1;
+				if (delta < 0) delta = 0;
+
+				if (delta == 0)
+				{
+					result.R = f2b(vf[0][0]);
+					result.G = f2b(vf[1][0]);
+					result.B = f2b(vf[2][0]);
+					result.A = f2b(delta);
+				}
+				else
+				{
+					result.R = f2b(vf[0][0] / delta);
+					result.G = f2b(vf[1][0] / delta);
+					result.B = f2b(vf[2][0] / delta);
+					result.A = f2b(delta);
+				}
+
+				pixels_out[x_ + y_ * width] = result;
+			}
+		}
+	}
+
+	return true;
+}
+
+//----------------------------------------------------------------------------------
+//
+//----------------------------------------------------------------------------------
+
 bool Native::Record(const wchar_t* pathWithoutExt, const wchar_t* ext, int32_t count, int32_t offsetFrame, int32_t freq, TransparenceType transparenceType)
 {
 	if (g_effect == NULL) return false;
 
+	auto currentBackgroundColor = g_renderer->BackgroundColor;
 	g_renderer->IsBackgroundTranslucent = transparenceType == TransparenceType::Original;
 
 	::Effekseer::Vector3D position(0, 0, g_Distance);
@@ -1315,19 +1460,17 @@ bool Native::Record(const wchar_t* pathWithoutExt, const wchar_t* ext, int32_t c
 	
 	for (int32_t i = 0; i < count; i++)
 	{
-		if (!g_renderer->BeginRecord(g_renderer->GuideWidth, g_renderer->GuideHeight)) return false;
+		std::vector<Effekseer::Color> pixels;
 
-		g_renderer->BeginRendering();
-		g_manager->Draw();
-		g_renderer->EndRendering();
+		RenderRecord(pixels, transparenceType);
+
+		int32_t width = g_renderer->GuideWidth;
+		int32_t height = g_renderer->GuideHeight;
 
 		for (int j = 0; j < freq; j++)
 		{
 			g_manager->Update();
 		}
-
-		std::vector<Effekseer::Color> pixels;
-		g_renderer->EndRecord(pixels, transparenceType == TransparenceType::Generate, transparenceType == TransparenceType::None);
 
 		wchar_t path_[260];
 		swprintf_s(path_, L"%s.%d%s", pathWithoutExt, i, ext);
@@ -1337,6 +1480,9 @@ bool Native::Record(const wchar_t* pathWithoutExt, const wchar_t* ext, int32_t c
 
 	g_manager->StopEffect(handle);
 	g_manager->Update();
+
+	g_renderer->BackgroundColor = currentBackgroundColor;
+
 	return true;
 }
 
@@ -1353,8 +1499,9 @@ bool Native::Record(const wchar_t* path, int32_t count, int32_t xCount, int32_t 
 	std::vector<Effekseer::Color> pixels_out;
 	pixels_out.resize((g_renderer->GuideWidth * xCount) * (g_renderer->GuideHeight * yCount));
 
+	auto currentBackgroundColor = g_renderer->BackgroundColor;
 	g_renderer->IsBackgroundTranslucent = transparenceType == TransparenceType::Original;
-
+	
 	::Effekseer::Vector3D position( 0, 0, g_Distance );
 	::Effekseer::Matrix43 mat, mat_rot_x, mat_rot_y;
 	mat_rot_x.RotationX( - g_RotX / 180.0f * PI );
@@ -1386,11 +1533,20 @@ bool Native::Record(const wchar_t* path, int32_t count, int32_t xCount, int32_t 
 	{
 		for( int x = 0; x < xCount; x++ )
 		{
-			if (!g_renderer->BeginRecord(g_renderer->GuideWidth, g_renderer->GuideHeight)) return false;
+			std::vector<Effekseer::Color> pixels;
 
-			g_renderer->BeginRendering();
-			g_manager->Draw();
-			g_renderer->EndRendering();
+			RenderRecord(pixels, transparenceType);
+
+			int32_t width = g_renderer->GuideWidth;
+			int32_t height = g_renderer->GuideHeight;
+
+			for (int32_t y_ = 0; y_ < height; y_++)
+			{
+				for (int32_t x_ = 0; x_ < width; x_++)
+				{
+					pixels_out[x * g_renderer->GuideWidth + x_ + (g_renderer->GuideWidth * xCount) * (g_renderer->GuideHeight * y + y_)] = pixels[x_ + y_ * width];
+				}
+			}
 
 			for (int j = 0; j < freq; j++)
 			{
@@ -1402,17 +1558,6 @@ bool Native::Record(const wchar_t* path, int32_t count, int32_t xCount, int32_t 
 			{
 				g_manager->StopEffect(handle);
 			}
-
-			std::vector<Effekseer::Color> pixels;
-			g_renderer->EndRecord(pixels, transparenceType == TransparenceType::Generate, transparenceType == TransparenceType::None);
-
-			for (int32_t y_ = 0; y_ < g_renderer->GuideHeight; y_++)
-			{
-				for (int32_t x_ = 0; x_ < g_renderer->GuideWidth; x_++)
-				{
-					pixels_out[x * g_renderer->GuideWidth + x_ + (g_renderer->GuideWidth * xCount) * (g_renderer->GuideHeight * y + y_)] = pixels[x_ + y_ * g_renderer->GuideWidth];
-				}
-			}
 		}
 	}
 	
@@ -1422,6 +1567,8 @@ Exit:;
 	
 	g_manager->Update();
 
+	g_renderer->BackgroundColor = currentBackgroundColor;
+
 	return true;
 }
 
@@ -1429,6 +1576,7 @@ bool Native::RecordAsGifAnimation(const wchar_t* path, int32_t count, int32_t of
 {
 	if (g_effect == NULL) return false;
 
+	auto currentBackgroundColor = g_renderer->BackgroundColor;
 	g_renderer->IsBackgroundTranslucent = transparenceType == TransparenceType::Original;
 
 	::Effekseer::Vector3D position(0, 0, g_Distance);
@@ -1466,19 +1614,14 @@ bool Native::RecordAsGifAnimation(const wchar_t* path, int32_t count, int32_t of
 
 	for (int32_t i = 0; i < count; i++)
 	{
-		if (!g_renderer->BeginRecord(g_renderer->GuideWidth, g_renderer->GuideHeight)) return false;
+		std::vector<Effekseer::Color> pixels;
 
-		g_renderer->BeginRendering();
-		g_manager->Draw();
-		g_renderer->EndRendering();
+		RenderRecord(pixels, transparenceType);
 
 		for (int j = 0; j < freq; j++)
 		{
 			g_manager->Update();
 		}
-
-		std::vector<Effekseer::Color> pixels;
-		g_renderer->EndRecord(pixels, transparenceType == TransparenceType::Generate, transparenceType == TransparenceType::None);
 
 		int delay = (int) round((1.0 / (double) 60.0 * freq) * 100.0);
 		gdImagePtr frameImage = gdImageCreateTrueColor(g_renderer->GuideWidth, g_renderer->GuideHeight);
@@ -1503,6 +1646,8 @@ bool Native::RecordAsGifAnimation(const wchar_t* path, int32_t count, int32_t of
 	g_manager->StopEffect(handle);
 	g_manager->Update();
 
+	g_renderer->BackgroundColor = currentBackgroundColor;
+
 	return true;
 }
 
@@ -1510,6 +1655,7 @@ bool Native::RecordAsAVI(const wchar_t* path, int32_t count, int32_t offsetFrame
 {
 	if (g_effect == NULL) return false;
 
+	auto currentBackgroundColor = g_renderer->BackgroundColor;
 	g_renderer->IsBackgroundTranslucent = transparenceType == TransparenceType::Original;
 
 	::Effekseer::Vector3D position(0, 0, g_Distance);
@@ -1550,19 +1696,14 @@ bool Native::RecordAsAVI(const wchar_t* path, int32_t count, int32_t offsetFrame
 
 	for (int32_t i = 0; i < count; i++)
 	{
-		if (!g_renderer->BeginRecord(g_renderer->GuideWidth, g_renderer->GuideHeight)) return false;
+		std::vector<Effekseer::Color> pixels;
 
-		g_renderer->BeginRendering();
-		g_manager->Draw();
-		g_renderer->EndRendering();
+		RenderRecord(pixels, transparenceType);
 
 		for (int j = 0; j < freq; j++)
 		{
 			g_manager->Update();
 		}
-
-		std::vector<Effekseer::Color> pixels;
-		g_renderer->EndRecord(pixels, transparenceType == TransparenceType::Generate, transparenceType == TransparenceType::None);
 
 		exporter.ExportFrame(d, pixels);
 		fwrite(d.data(), 1, d.size(), fp);
@@ -1575,6 +1716,8 @@ bool Native::RecordAsAVI(const wchar_t* path, int32_t count, int32_t offsetFrame
 
 	g_manager->StopEffect(handle);
 	g_manager->Update();
+
+	g_renderer->BackgroundColor = currentBackgroundColor;
 
 	return true;
 }

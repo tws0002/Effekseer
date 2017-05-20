@@ -611,11 +611,9 @@ bool Renderer::BeginRecord( int32_t width, int32_t height )
 	m_recordingWidth = width;
 	m_recordingHeight = height;
 
-	GenerateRenderTargets(m_recordingWidth, m_recordingHeight);
-
 	HRESULT hr;
 
-	hr = GetDevice()->CreateTexture( width, height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &m_recordingTargetTexture, NULL );
+	hr = GetDevice()->CreateTexture(width, height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A32B32G32R32F, D3DPOOL_DEFAULT, &m_recordingTargetTexture, NULL);
 	if( FAILED( hr ) ) return false;
 
 	m_recordingTargetTexture->GetSurfaceLevel( 0, &m_recordingTarget );
@@ -644,7 +642,7 @@ bool Renderer::BeginRecord( int32_t width, int32_t height )
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-void Renderer::EndRecord(std::vector<Effekseer::Color>& pixels)
+void Renderer::EndRecord(std::vector<std::array<float, 4>>& pixels)
 {
 	assert(m_recording);
 
@@ -659,7 +657,7 @@ void Renderer::EndRecord(std::vector<Effekseer::Color>& pixels)
 	//IDirect3DTexture9*	temp_tex = nullptr;
 
 	GetDevice()->CreateOffscreenPlainSurface(
-		m_recordingWidth, m_recordingHeight, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, &temp_sur, NULL);
+		m_recordingWidth, m_recordingHeight, D3DFMT_A32B32G32R32F, D3DPOOL_SYSTEMMEM, &temp_sur, NULL);
 	//temp_tex->GetSurfaceLevel(0, &temp_sur);
 
 	GetDevice()->GetRenderTargetData(m_recordingTarget, temp_sur);
@@ -679,11 +677,14 @@ void Renderer::EndRecord(std::vector<Effekseer::Color>& pixels)
 		{
 			for (int32_t x = 0; x < m_recordingWidth; x++)
 			{
-				auto src = &(((uint8_t*) drect.pBits)[x * 4 + drect.Pitch * y]);
-				pixels[x + m_recordingWidth * y].A = src[3];
-				pixels[x + m_recordingWidth * y].R = src[2];
-				pixels[x + m_recordingWidth * y].G = src[1];
-				pixels[x + m_recordingWidth * y].B = src[0];
+				auto p = (uint8_t*) drect.pBits;
+				p += x * sizeof(float) * 4 + drect.Pitch * y;
+
+				auto src = (float*) p;
+				pixels[x + m_recordingWidth * y][0] = src[0];
+				pixels[x + m_recordingWidth * y][1] = src[1];
+				pixels[x + m_recordingWidth * y][2] = src[2];
+				pixels[x + m_recordingWidth * y][3] = src[3];
 			}
 		}
 
@@ -696,8 +697,6 @@ void Renderer::EndRecord(std::vector<Effekseer::Color>& pixels)
 	ES_SAFE_RELEASE(m_recordingTarget);
 	ES_SAFE_RELEASE(m_recordingTargetTexture);
 	ES_SAFE_RELEASE(m_recordingDepth);
-
-	GenerateRenderTargets(m_width, m_height);
 
 	m_recording = false;
 }

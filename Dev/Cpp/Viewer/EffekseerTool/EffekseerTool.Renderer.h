@@ -6,6 +6,7 @@
 // Include
 //----------------------------------------------------------------------------------
 #include "EffekseerTool.Base.h"
+#include <array>
 
 //----------------------------------------------------------------------------------
 //
@@ -231,7 +232,7 @@ public:
 	/**
 	@brief	録画終了
 	*/
-	void EndRecord(std::vector<Effekseer::Color>& pixels);
+	void EndRecord(std::vector<std::array<float, 4>>& pixels);
 
 	/**
 		@brief	背景の読み込み

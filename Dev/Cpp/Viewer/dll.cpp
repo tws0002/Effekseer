@@ -1283,6 +1283,22 @@ bool Native::SetRandomSeed( int seed )
 //----------------------------------------------------------------------------------
 bool RenderRecord(std::vector<Effekseer::Color>& pixels_out, TransparenceType transparenceType)
 {
+	auto f2b = [](float v) -> uint8_t
+	{
+		auto v_ = v * 255;
+		if (v_ > 255) v_ = 255;
+		if (v_ < 0) v_ = 0;
+		return v_;
+	};
+
+	auto b2f = [](uint8_t v) -> float
+	{
+		auto v_ = (float) v / 255.0f;
+		return v_;
+	};
+
+	g_renderer->IsBackgroundTranslucent = transparenceType == TransparenceType::Original;
+
 	pixels_out.resize(g_renderer->GuideWidth * g_renderer->GuideHeight);
 
 	if (transparenceType == TransparenceType::None ||
@@ -1296,7 +1312,7 @@ bool RenderRecord(std::vector<Effekseer::Color>& pixels_out, TransparenceType tr
 		g_manager->Draw();
 		g_renderer->EndRendering();
 
-		std::vector<Effekseer::Color> pixels;
+		std::vector<std::array<float, 4>> pixels;
 		g_renderer->EndRecord(pixels);
 
 		int32_t width = g_renderer->GuideWidth;
@@ -1308,10 +1324,13 @@ bool RenderRecord(std::vector<Effekseer::Color>& pixels_out, TransparenceType tr
 			{
 				if (transparenceType == TransparenceType::None)
 				{
-					pixels[x_ + width * y_].A = 255;
+					pixels[x_ + width * y_][3] = 1.0f;
 				}
 
-				pixels_out[x_ + y_ * width] = pixels[x_ + y_ * width];
+				pixels_out[x_ + y_ * width].R = f2b(pixels[x_ + y_ * width][0]);
+				pixels_out[x_ + y_ * width].G = f2b(pixels[x_ + y_ * width][1]);
+				pixels_out[x_ + y_ * width].B = f2b(pixels[x_ + y_ * width][2]);
+				pixels_out[x_ + y_ * width].A = f2b(pixels[x_ + y_ * width][3]);
 			}
 		}
 	}
@@ -1319,31 +1338,15 @@ bool RenderRecord(std::vector<Effekseer::Color>& pixels_out, TransparenceType tr
 	{
 		// Estimate alpha from three backgrounds.
 
-		auto f2b = [](float v) -> uint8_t
-		{
-			auto v_ = v * 255;
-			if (v_ > 255) v_ = 255;
-			if (v_ < 0) v_ = 0;
-			return v_;
-		};
-
-		auto b2f = [](uint8_t v) -> float
-		{
-			auto v_ = (float) v / 255.0f;
-			return v_;
-		};
-
 		const int32_t pointNum = 5;
 
-		std::vector<Effekseer::Color> pixels[pointNum];
+		std::vector<std::array<float, 4>> pixels[pointNum];
 
 		for (int32_t i = 0; i < pointNum; i++)
 		{
 			auto v = (float) (i) / (float) (pointNum - 1) * 255;
-			if (i == 0) g_renderer->BackgroundColor = Effekseer::Color(v, v, v, 255);
-			if (i == 1) g_renderer->BackgroundColor = Effekseer::Color(v, v, v, 255);
-			if (i == 2) g_renderer->BackgroundColor = Effekseer::Color(v, v, v, 255);
-
+			g_renderer->BackgroundColor = Effekseer::Color(v, v, v, 255);
+			
 			if (!g_renderer->BeginRecord(g_renderer->GuideWidth, g_renderer->GuideHeight)) return false;
 
 			g_renderer->BeginRendering();
@@ -1367,22 +1370,55 @@ bool RenderRecord(std::vector<Effekseer::Color>& pixels_out, TransparenceType tr
 
 				for (int32_t i = 0; i <pointNum; i++)
 				{
-					vf[3][i] = b2f(pixels[i][x_ + width * y_].A);
+					vf[3][i] = Effekseer::Min(pixels[i][x_ + width * y_][3], 1.0f);
+					vf[3][i] = Effekseer::Max(vf[3][i], 0.0f);
 
-					vf[0][i] = b2f(pixels[i][x_ + width * y_].R) * vf[3][i];
-					vf[1][i] = b2f(pixels[i][x_ + width * y_].G) * vf[3][i];
-					vf[2][i] = b2f(pixels[i][x_ + width * y_].B) * vf[3][i];
+					vf[0][i] = pixels[i][x_ + width * y_][0] * vf[3][i];
+					vf[1][i] = pixels[i][x_ + width * y_][1] * vf[3][i];
+					vf[2][i] = pixels[i][x_ + width * y_][2] * vf[3][i];
 				}
 
-				// Calc delta using lsm
-				float sum_x = 0;
-				float sum_y = 0;
-				float sum_xy = 0;
-				float sum_xx = 0;
+#if 0
+				// Old
+				auto rf = vf[0][0];
+				auto gf = vf[1][0];
+				auto bf = vf[2][0];
+				
+				auto af = rf;
+				af = Effekseer::Max(af, gf);
+				af = Effekseer::Max(af, bf);
 
-				for (int32_t i = 0; i <pointNum; i++)
+				if (af > 0.0f)
 				{
-					for (int32_t c = 0; c < 3; c++)
+					result.R = f2b(rf / af);
+					result.G = f2b(gf / af);
+					result.B = f2b(bf / af);
+				}
+
+				result.A = f2b(af);
+
+#else
+				// Basically, alpha is calculated based on the highest color.
+				auto rf = vf[0][0];
+				auto gf = vf[1][0];
+				auto bf = vf[2][0];
+
+				auto af = rf;
+				af = Effekseer::Max(af, gf);
+				af = Effekseer::Max(af, bf);
+
+
+				// Calculate delta using LSM
+				float delta[3];
+
+				for (int32_t c = 0; c < 3; c++)
+				{
+					float sum_x = 0;
+					float sum_y = 0;
+					float sum_xy = 0;
+					float sum_xx = 0;
+
+					for (int32_t i = 0; i < pointNum; i++)
 					{
 						float x = (float) i / (float) (pointNum - 1);
 						float y = vf[c][i];
@@ -1392,26 +1428,52 @@ bool RenderRecord(std::vector<Effekseer::Color>& pixels_out, TransparenceType tr
 						sum_xy += x * y;
 						sum_xx += x * x;
 					}
+					
+
+					float delta1 = (pointNum) * sum_xy - sum_x * sum_y;
+					float delta2 = (pointNum) * sum_xx - sum_x * sum_x;
+
+					delta[c] = 1.0f;
+
+					if (delta1 != delta2)
+					{
+						delta[c] = delta1 / delta2;
+					}
+
+					if (delta[c] > 1) delta[c] = 1;
+					if (delta[c] < 0) delta[c] = 0;
 				}
 
-				float delta = ((pointNum * 3) * sum_xy - sum_x * sum_y) / ((pointNum * 3) * sum_xx - sum_x * sum_x);
-				if (delta > 1) delta = 1;
-				if (delta < 0) delta = 0;
+				for (int32_t i = 0; i < 3; i++)
+				{
+					if (af < 1.0f - delta[i])
+					{
+						af = 1.0f - delta[i];
+					}
+				}
 
-				if (delta == 0)
+				if (af == 1)
 				{
 					result.R = f2b(vf[0][0]);
 					result.G = f2b(vf[1][0]);
 					result.B = f2b(vf[2][0]);
-					result.A = f2b(delta);
+					result.A = f2b(af);
+				}
+				else if (af == 0)
+				{
+					result.R = f2b(0.0f);
+					result.G = f2b(0.0f);
+					result.B = f2b(0.0f);
+					result.A = f2b(0.0f);
 				}
 				else
 				{
-					result.R = f2b(vf[0][0] / delta);
-					result.G = f2b(vf[1][0] / delta);
-					result.B = f2b(vf[2][0] / delta);
-					result.A = f2b(delta);
+					result.R = f2b(vf[0][0] / af);
+					result.G = f2b(vf[1][0] / af);
+					result.B = f2b(vf[2][0] / af);
+					result.A = f2b(af);
 				}
+#endif
 
 				pixels_out[x_ + y_ * width] = result;
 			}
@@ -1430,7 +1492,6 @@ bool Native::Record(const wchar_t* pathWithoutExt, const wchar_t* ext, int32_t c
 	if (g_effect == NULL) return false;
 
 	auto currentBackgroundColor = g_renderer->BackgroundColor;
-	g_renderer->IsBackgroundTranslucent = transparenceType == TransparenceType::Original;
 
 	::Effekseer::Vector3D position(0, 0, g_Distance);
 	::Effekseer::Matrix43 mat, mat_rot_x, mat_rot_y;
@@ -1500,7 +1561,6 @@ bool Native::Record(const wchar_t* path, int32_t count, int32_t xCount, int32_t 
 	pixels_out.resize((g_renderer->GuideWidth * xCount) * (g_renderer->GuideHeight * yCount));
 
 	auto currentBackgroundColor = g_renderer->BackgroundColor;
-	g_renderer->IsBackgroundTranslucent = transparenceType == TransparenceType::Original;
 	
 	::Effekseer::Vector3D position( 0, 0, g_Distance );
 	::Effekseer::Matrix43 mat, mat_rot_x, mat_rot_y;
@@ -1577,7 +1637,6 @@ bool Native::RecordAsGifAnimation(const wchar_t* path, int32_t count, int32_t of
 	if (g_effect == NULL) return false;
 
 	auto currentBackgroundColor = g_renderer->BackgroundColor;
-	g_renderer->IsBackgroundTranslucent = transparenceType == TransparenceType::Original;
 
 	::Effekseer::Vector3D position(0, 0, g_Distance);
 	::Effekseer::Matrix43 mat, mat_rot_x, mat_rot_y;
@@ -1656,7 +1715,6 @@ bool Native::RecordAsAVI(const wchar_t* path, int32_t count, int32_t offsetFrame
 	if (g_effect == NULL) return false;
 
 	auto currentBackgroundColor = g_renderer->BackgroundColor;
-	g_renderer->IsBackgroundTranslucent = transparenceType == TransparenceType::Original;
 
 	::Effekseer::Vector3D position(0, 0, g_Distance);
 	::Effekseer::Matrix43 mat, mat_rot_x, mat_rot_y;

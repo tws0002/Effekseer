@@ -1164,7 +1164,7 @@ namespace Effekseer.Properties {
         }
         
         /// <summary>
-        ///   Start Frame に類似しているローカライズされた文字列を検索します。
+        ///   開始フレーム に類似しているローカライズされた文字列を検索します。
         /// </summary>
         internal static string StartFrame {
             get {
@@ -1202,7 +1202,7 @@ namespace Effekseer.Properties {
         }
         
         /// <summary>
-        ///   Transmit data on load に類似しているローカライズされた文字列を検索します。
+        ///   読み込み時にデータを送信する に類似しているローカライズされた文字列を検索します。
         /// </summary>
         internal static string TransmitDataOnLoad {
             get {

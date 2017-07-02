@@ -498,7 +498,7 @@ static ::Effekseer::Manager*			g_manager = NULL;
 static ::EffekseerTool::Renderer*		g_renderer = NULL;
 static ::Effekseer::Effect*				g_effect = NULL;
 static ::EffekseerTool::Sound*			g_sound = NULL;
-static std::map<std::wstring,IDirect3DTexture9*> m_textures;
+static std::map<std::wstring, Effekseer::TextureData*> m_textures;
 static std::map<std::wstring,EffekseerRendererDX9::Model*> m_models;
 
 static std::vector<::Effekseer::Handle>	g_handles;
@@ -528,7 +528,7 @@ Native::TextureLoader::~TextureLoader()
 //----------------------------------------------------------------------------------
 //
 //----------------------------------------------------------------------------------
-void* Native::TextureLoader::Load(const EFK_CHAR* path, ::Effekseer::TextureType textureType)
+Effekseer::TextureData* Native::TextureLoader::Load(const EFK_CHAR* path, ::Effekseer::TextureType textureType)
 {
 	wchar_t dst[260];
 	Combine( RootPath.c_str(), (const wchar_t *)path, dst, 260 );
@@ -538,7 +538,7 @@ void* Native::TextureLoader::Load(const EFK_CHAR* path, ::Effekseer::TextureType
 
 	if( m_textures.count( key ) > 0 )
 	{
-		pTexture = m_textures[ key ];
+		return m_textures[ key ];
 	}
 	else
 	{
@@ -579,11 +579,15 @@ void* Native::TextureLoader::Load(const EFK_CHAR* path, ::Effekseer::TextureType
 
 			delete [] data_texture;
 
-			m_textures[ key ] = pTexture;
+			Effekseer::TextureData* t = new Effekseer::TextureData();
+			t->UserPtr = pTexture;
+			m_textures[ key ] = t;
+			return t;
 		}
 	}
 
-	return pTexture;
+	
+	return NULL;
 }
 
 //----------------------------------------------------------------------------------
@@ -1678,22 +1682,23 @@ bool Native::SetSoundVolume( float volume )
 bool Native::InvalidateTextureCache()
 {
 	{
-		std::map<std::wstring,IDirect3DTexture9*>::iterator it = m_textures.begin();
-		std::map<std::wstring,IDirect3DTexture9*>::iterator it_end = m_textures.end();
-		while( it != it_end )
+		auto it = m_textures.begin();
+		auto it_end = m_textures.end();
+		while (it != it_end)
 		{
-			ES_SAFE_RELEASE( (*it).second );
+			IDirect3DTexture9* texture = (IDirect3DTexture9*) (*it).second;
+			ES_SAFE_RELEASE(texture);
 			++it;
 		}
 		m_textures.clear();
 	}
 
 	{
-		std::map<std::wstring,EffekseerRendererDX9::Model*>::iterator it = m_models.begin();
-		std::map<std::wstring,EffekseerRendererDX9::Model*>::iterator it_end = m_models.end();
-		while( it != it_end )
+		std::map<std::wstring, EffekseerRendererDX9::Model*>::iterator it = m_models.begin();
+		std::map<std::wstring, EffekseerRendererDX9::Model*>::iterator it_end = m_models.end();
+		while (it != it_end)
 		{
-			ES_SAFE_DELETE( (*it).second );
+			ES_SAFE_DELETE((*it).second);
 			++it;
 		}
 		m_models.clear();

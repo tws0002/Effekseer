@@ -514,7 +514,8 @@ Native::TextureLoader::TextureLoader(EffekseerRenderer::Renderer* renderer, bool
 	: m_renderer	( renderer )
 	, m_isSRGBMode(isSRGBMode)
 {
-
+	auto r = (EffekseerRendererDX9::Renderer*)m_renderer;
+	m_originalTextureLoader = EffekseerRendererDX9::CreateTextureLoader(r->GetDevice());
 }
 
 //----------------------------------------------------------------------------------
@@ -522,7 +523,7 @@ Native::TextureLoader::TextureLoader(EffekseerRenderer::Renderer* renderer, bool
 //----------------------------------------------------------------------------------
 Native::TextureLoader::~TextureLoader()
 {
-
+	ES_SAFE_DELETE(m_originalTextureLoader);
 }
 
 //----------------------------------------------------------------------------------
@@ -530,6 +531,29 @@ Native::TextureLoader::~TextureLoader()
 //----------------------------------------------------------------------------------
 Effekseer::TextureData* Native::TextureLoader::Load(const EFK_CHAR* path, ::Effekseer::TextureType textureType)
 {
+	wchar_t dst[260];
+	Combine(RootPath.c_str(), (const wchar_t *) path, dst, 260);
+
+	std::wstring key(dst);
+
+	if (m_textures.count(key) > 0)
+	{
+		return m_textures[key];
+	}
+	else
+	{
+		auto t = m_originalTextureLoader->Load(path, textureType);
+
+		if (t != nullptr)
+		{
+			m_textures[key] = t;
+		}
+
+		return t;
+	}
+
+	return nullptr;
+	/*
 	wchar_t dst[260];
 	Combine( RootPath.c_str(), (const wchar_t *)path, dst, 260 );
 
@@ -588,6 +612,7 @@ Effekseer::TextureData* Native::TextureLoader::Load(const EFK_CHAR* path, ::Effe
 
 	
 	return NULL;
+	*/
 }
 
 //----------------------------------------------------------------------------------
@@ -1686,7 +1711,7 @@ bool Native::InvalidateTextureCache()
 		auto it_end = m_textures.end();
 		while (it != it_end)
 		{
-			IDirect3DTexture9* texture = (IDirect3DTexture9*) (*it).second;
+			IDirect3DTexture9* texture = (IDirect3DTexture9*) (*it).second->UserPtr;
 			ES_SAFE_RELEASE(texture);
 			++it;
 		}

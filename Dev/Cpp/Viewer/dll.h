@@ -101,6 +101,7 @@ private:
 	{
 	private:
 		EffekseerRenderer::Renderer*	m_renderer;
+		Effekseer::TextureLoader*		m_originalTextureLoader = nullptr;
 		bool							m_isSRGBMode = false;
 	public:
 		TextureLoader( EffekseerRenderer::Renderer* renderer, bool isSRGBMode );
